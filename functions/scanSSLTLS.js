@@ -162,7 +162,10 @@ function buildFindings({ cert, protocol, cipher, authorized, authorizationError 
   // ── 4. Cipher Suite Strength ──────────────────────────────────────────────
   const cipherName = cipher?.name || cipher?.standardName || '';
   const isWeakCipher = WEAK_CIPHER_PATTERNS.some((p) => cipherName.toUpperCase().includes(p));
-  const hasForwardSecrecy = cipherName.toUpperCase().startsWith('ECDHE') || cipherName.toUpperCase().startsWith('DHE');
+  // TLS 1.3 mandates ephemeral key exchange — forward secrecy is always present.
+  // TLS 1.2 and below encode the key exchange in the cipher name (ECDHE_*, DHE_*).
+  const isTLS13 = protocol === 'TLSv1.3';
+  const hasForwardSecrecy = isTLS13 || cipherName.toUpperCase().startsWith('ECDHE') || cipherName.toUpperCase().startsWith('DHE');
 
   if (!cipherName) {
     findings.push({
@@ -205,22 +208,33 @@ function buildFindings({ cert, protocol, cipher, authorized, authorizationError 
   // ── 5. Certificate Key Size ───────────────────────────────────────────────
   const bits = cert.bits;
   if (bits !== undefined) {
-    if (bits < 2048) {
+    // cert.asn1Curve is set for EC keys; cert.exponent is set for RSA keys.
+    // ECDSA P-256 (256-bit) ≈ RSA 3072-bit in strength — perfectly secure.
+    // The 2048-bit minimum threshold only applies to RSA.
+    const isECKey = !!cert.asn1Curve || (!cert.exponent && bits <= 521);
+    const keyLabel = isECKey ? `${bits}-bit ECDSA (${cert.asn1Curve || 'EC'})` : `${bits}-bit RSA`;
+    const isWeak = isECKey ? bits < 256 : bits < 2048;
+
+    if (isWeak) {
       findings.push({
         check: 'Key Size',
         status: 'Fail',
         severity: 'High',
-        value: `${bits}-bit key`,
-        description: `A ${bits}-bit key is considered too weak by modern standards.`,
-        remediation: 'Reissue the certificate with at least a 2048-bit RSA key or use an ECDSA P-256 key.',
+        value: keyLabel,
+        description: isECKey
+          ? `A ${bits}-bit EC key is below the minimum recommended size.`
+          : `A ${bits}-bit RSA key is too weak. Minimum recommended is 2048-bit.`,
+        remediation: 'Reissue the certificate with at least a 2048-bit RSA key or an ECDSA P-256 key.',
       });
     } else {
       findings.push({
         check: 'Key Size',
         status: 'Pass',
         severity: 'Low',
-        value: `${bits}-bit key`,
-        description: 'Key size meets minimum security requirements.',
+        value: keyLabel,
+        description: isECKey
+          ? `ECDSA ${bits}-bit key is strong (equivalent to ~${bits >= 384 ? '7680' : '3072'}-bit RSA).`
+          : `${bits}-bit RSA key meets security requirements.`,
         remediation: 'No action needed.',
       });
     }
