@@ -2,6 +2,7 @@
 const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
 const fetch = require('node-fetch');
+const { awardPointsAndBadges } = require('./gamification');
 
 const db = admin.firestore();
 
@@ -191,16 +192,16 @@ exports.scanHttpHeaders = functions.https.onCall(async (data, context) => {
     // Save to Firestore
     const docRef = await db.collection('scans').add(scanResult);
 
-    // Update user's scan count
-    await db.doc(`users/${userEmail}`).update({
-      scansCount: admin.firestore.FieldValue.increment(1),
-      lastScanDate: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    // Award points and badges
+    const gamification = await awardPointsAndBadges(
+      userEmail, 'HTTP_HEADERS', scanResult.summary, scanResult.findings
+    );
 
     return {
       success: true,
       scanId: docRef.id,
       data: scanResult,
+      gamification,
     };
   } catch (error) {
     console.error('Scan error:', error);

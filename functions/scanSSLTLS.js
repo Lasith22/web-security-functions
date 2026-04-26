@@ -2,6 +2,7 @@
 const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
 const tls = require('tls');
+const { awardPointsAndBadges } = require('./gamification');
 
 const db = admin.firestore();
 
@@ -328,13 +329,11 @@ exports.scanSSLTLS = functions.https.onCall(async (data, context) => {
 
     const docRef = await db.collection('scans').add(scanResult);
 
-    // Increment user scan count (same as HTTP headers scanner)
-    await db.doc(`users/${userEmail}`).update({
-      scansCount: admin.firestore.FieldValue.increment(1),
-      lastScanDate: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    const gamification = await awardPointsAndBadges(
+      userEmail, 'SSL_TLS', scanResult.summary, scanResult.findings
+    );
 
-    return { success: true, scanId: docRef.id, data: scanResult };
+    return { success: true, scanId: docRef.id, data: scanResult, gamification };
   } catch (error) {
     functions.logger.error('SSL/TLS scan error:', error);
 
